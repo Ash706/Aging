@@ -1,0 +1,196 @@
+---
+title: "Update DE remove young samples"
+author: "Ashfaq Ali"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Select data for age below 40
+
+```{r}
+setwd("/Users/cob-aaf/Documents/Projects/Ageing/Code/")
+Data_se_sel <- readRDS("../Data/data_sumExpImputed.rds")
+#Data_se_comp <- readRDS("../Data/data_sumExpImputed.rds")
+Data_se_sel$Location <- as.factor(Data_se$Location)
+Data_se_sel$Gender <- as.factor(Data_se$Gender)
+Data_se_sel$Category <- as.factor(Data_se$Category)
+Data_se_sel$Age <- as.numeric(Data_se$Age)
+Data_se_sel <- Data_se_sel[,Data_se_sel$Age>=40]
+```
+
+## Annotate proteins
+
+```{r}
+library(biomaRt)
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+filters = listFilters(ensembl)
+filters[1:10,]
+attributes = listAttributes(ensembl)
+attributes[1:15,]
+#searchAttributes(mart = ensembl, pattern = "protein","page")
+searchFilters(mart = ensembl, pattern = "prot")
+#genes <- rowData(Data_se)$gene
+proteins <- rowData(Data_se_sel)$protein
+genes
+
+hgnc_symbol
+
+genes3 <-getBM(attributes=c('hgnc_symbol',  'description',"uniprotswissprot", "entrezgene_id"), 
+      filters = 'uniprotswissprot', 
+      values = proteins, 
+      mart = ensembl,
+      uniqueRows = TRUE
+        )
+
+
+genes4 <-genes3 %>% distinct(uniprotswissprot)
+rowData(Data_se_sel)[c("entrezgene_id", 'description', 'hgnc_symbol'),]<- genes3[rownames(Data_se_sel)  %in% genes3$uniprotswissprot , c("entrezgene_id", 'description', 'hgnc_symbol')]
+
+keys <- keys(org.Hs.eg.db)
+
+
+anndb <- select(org.Hs.eg.db, keys=proteins,keytype = "UNIPROT", columns = c("SYMBOL", "UNIPROT", "ENTREZID"),  multiVals="CharacterList")
+anndb2 <- mapIds(org.Hs.eg.db, keys=proteins, column= "ENTREZID", keytype='UNIPROT', 
+    multiVals=first)
+```
+## Differential expression
+
+```{r}
+design_sel <- model.matrix(~1+Data_se_sel$Age)
+colnames(design_sel) <- c("(Intercept)", "Age")
+fitAgeMain_sel <- lmFit((assays(Data_se_sel)$Loess), design = design_sel)
+
+fitAgeMain_sel <- eBayes(fit = fitAgeMain_sel)
+
+AgeMain_sel <-topTable(fitAgeMain_sel, p.value = 0.05, number = Inf, coef = "Age") 
+dim(AgeMain_sel)
+```
+
+## Test for interaction
+
+```{r}
+design2_sel <- model.matrix(~1+ Data_se_sel$Gender+ Data_se_sel$Age +Data_se_sel$Location + Data_se_sel$Age*Data_se_sel$Location )
+
+colnames(design2_sel) <- c("(Intercept)", "Gender", "Age", "Location", "AgeLocInt")
+fitint_sel <- lmFit((assays(Data_se_sel)$Loess), design = design2_sel)
+
+fitint_sel<- eBayes(fit = fitint)
+
+Res_sel <- list()
+Res_sel$selressAge <-topTable(fitint_sel, p.value = 0.05, number = Inf, coef = "Age") %>% rownames_to_column(var = "protein") %>%
+    merge(rowData(Data_se_comp),. ) %>% 
+    as.data.frame() %>%  
+    arrange(adj.P.Val)
+
+Res_sel$selressLocation <-topTable(fitint_sel, p.value = 0.05, number = Inf, coef = "Location") %>% rownames_to_column(var = "protein") %>% merge(rowData(Data_se_comp),. ) %>% as.data.frame() %>%  arrange(adj.P.Val)
+Res_sel$selressGender <-topTable(fitint_sel, p.value = 0.05, number = Inf, coef = "Gender") %>% rownames_to_column(var = "protein") %>% merge(rowData(Data_se_comp),. ) %>% as.data.frame() %>%  arrange(adj.P.Val)
+
+Res_sel$selressAgeLoc <-topTable(fitint_sel, p.value = 0.05, number = Inf, coef = "AgeLocInt") %>% rownames_to_column(var = "protein") %>% merge(rowData(Data_se_comp),. ) %>% as.data.frame() %>%  arrange(adj.P.Val)
+Res_sel$data <- as.data.frame(cbind(rowData(Data_se_sel), assays(Data_se_sel)$Loess))
+writexl::write_xlsx(Res_sel, "../Results/RemoveYoung/DE_proteins_Age_Gender_Location_Int_annotated_remove_young.xlsx")
+
+
+```
+
+
+```{r}
+
+intData_sel <- assays(Data_se_sel)$Loess[rownames(selressAgeLoc),]
+png("../Results/RemoveYoung/HeatmapIntsel.png", units = "cm", height = 30, width = 30,res = 300)
+pheatmap((intData_sel), display_numbers=FALSE, fontsize=7, cluster_cols=FALSE, cluster_rows = TRUE, scale = "row")
+dev.off()
+```
+
+
+## Plot interactions
+
+```{r}
+library("ggthemes")
+tDatat2sel <- cbind(as.data.frame(colData(Data_se_sel))[, c("Age", "Location")],t(intData_sel))
+tDatat2sel %>% 
+    gather(key, value, -Age, -Location) %>% 
+    ggplot(aes(x = Age, y = value), color= Location) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    facet_grid(~key, scales = "free")
+
+tDatat2asel <- tDatat2sel %>%  gather(key, value, -Age, -Location)
+tDatat2asel$key <- as.character(tDatat2asel$key)
+tDatat2vsel <-  tDatat2sel %>% filter(Location=="Village") %>%  gather(key, value, -Age, -Location)
+tDatat2csel <- tDatat2asel %>% filter(Location=="City") %>%  gather(key, value, -Age, -Location)
+
+int.plot <- function(df, na.rm = TRUE, ...){
+  
+  # create list of counties in data to loop over 
+  protein_list <- unique(df$key)
+  
+for (i in seq_along(protein_list)) { 
+
+   plot <- 
+       ggplot(subset(df, df$key==protein_list[i]), aes(x = Age, y = value, colour= Location)) +
+    geom_point(aes(colour = factor(Location)),  size = 3) +
+    geom_smooth(method = "lm", size=2) +
+    # geom_smooth(method = "lm", data = tDatat2c , color="blue") + 
+      theme_pander() +
+      #theme(legend.position="none")   + 
+      
+      scale_y_continuous("Protein Intensity", 
+                         limits=c(min(df$value[df$value==protein_list[i]]), max(df$value[df$value==protein_list[i]]))) +
+      scale_x_continuous("Age in Years") +
+      
+      ggtitle(paste( protein_list[i],' \n',"Intensity in Location village and city" ,
+                    sep=''))
+    
+   # save plots as .png
+     ggsave(plot, file=paste("../Results/Figures/",
+                            protein_list[i], ".png", sep=''), 
+            scale=2,
+            units = "cm", height = 15, width = 10)
+   
+    # save plots as .pdf
+   ggsave(plot, file=paste("../Results/RemoveYoung/",
+                            protein_list[i], ".pdf", sep=''), scale=2,
+            units = "cm", height = 15, width = 10)
+    
+    # print plots to screen
+   
+    print(plot)
+}
+}
+
+int.plot(tDatat2asel)
+```
+
+
+```{r}
+tDatat2 %>% 
+    gather(key, value, -Age, -Location) %>% 
+    ggplot(aes(x = Age, y = value), color= Location) +
+    geom_point(color="grey") +
+    geom_smooth(method = "lm", data = tDatat2v , color="red") +
+    geom_smooth(method = "lm", data = tDatat2c , color="blue") +
+    facet_grid(~key, scales = "free")
+```
+
+```{r}
+library(ggbiplot)
+pca <- stats::prcomp(t(assays(Data_se_sel)$imputed))
+g <- ggbiplot(pca, obs.scale = 1, var.scale = 1, 
+              groups = Data_se_sel$Category, ellipse = F, 
+              circle = TRUE, var.axes = F, labels = Data_se_sel$`Sample number`) + 
+  scale_color_discrete(name = '') + 
+  theme(legend.direction = 'horizontal', 
+               legend.position = 'top') + 
+  theme_bw()
+ggsave(g, file=paste("../Results/RemoveYoung/",
+                            "PCA_lables", ".png", sep=''), 
+            scale=2,
+            units = "cm", height = 15, width = 10)
+
+
+```
+

@@ -1,0 +1,1168 @@
+---
+title: "Ageing Proteomics"
+author: "Ashfaq Ali"
+date: "6/15/2020"
+output: html_document
+---
+
+Contact: valentina.siino@immun.lth.se
+PI: Fredrik Levander
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(SummarizedExperiment)
+library(mice)
+library(VIM)
+library(limma)
+library(pheatmap)
+library(timeOmics)
+
+```
+## Prepare data 
+
+```{r}
+Ageing_co_Meta <- read_delim("../Data/Ageing_co_Meta_tab.txt", "\t", escape_double = FALSE, trim_ws = TRUE ) %>% as.data.frame()
+
+Design_matrix <- read_delim("../Data/Design matrix.txt",  "\t", escape_double = FALSE, trim_ws = TRUE)
+
+Ageing_co_Meta$sampleID <- paste(Ageing_co_Meta$Category,Ageing_co_Meta$`Sample number`,  sep = "_")
+
+rownames(Ageing_co_Meta) <- Ageing_co_Meta$sampleID
+
+Ageing_CycLoess_normalized <- read_delim("../Data/Ageing_CycLoess-normalized.txt","\t", escape_double = FALSE, trim_ws = TRUE)
+
+
+
+row_tmp <-str_split(Ageing_CycLoess_normalized$Protein, pattern    = "[;]", simplify = T)[,1]
+row_tmp1 <- str_split(row_tmp, pattern    = "[|]", simplify = T)[,2]
+
+row_tmp2 <- str_split(row_tmp, pattern    = "[|]", simplify = T)[,3] %>%  str_split(pattern    = "[_]", simplify = T)
+
+row_Meta <- data.frame(protein = row_tmp1, rowdat=row_tmp, gene=row_tmp2[,1], row.names = row_tmp1)
+
+
+data <- as.matrix(Ageing_CycLoess_normalized[, Ageing_co_Meta$sampleID])
+rownames(data) <- row_Meta$protein
+
+Data_se <- SummarizedExperiment(assays = list(Loess= data), colData = Ageing_co_Meta, rowData = row_Meta)
+```
+
+
+```{r}
+#saveRDS(Data_se, "../Data/data_sumExp.rds")
+```
+
+
+
+## Analyze missingness 
+
+```{r}
+setwd("/Users/cob-aaf/Documents/Projects/Ageing/Code/")
+
+## Analyze missingness and Impute for PCA etc
+Data_se <- readRDS("../Data/data_sumExp.rds")
+
+missing <-mice::md.pattern(assays(Data_se)$Loess)
+
+#png("../Results/Figures/missingProt.png", res = 300, width = 8000, height = 3000)
+mice_prot <- aggr(t(assays(Data_se)$Loess), col=c('navyblue','yellow'),
+ numbers=TRUE, sortVars=TRUE,
+ labels=names(t(assays(Data_se)$Loess)), cex.axis=.2,
+ gap=1, ylab=c("Missing data","Pattern"))
+#dev.off()
+Data_se_comp <- Data_se[mice_prot$missings[mice_prot$missing$Count <50,]$Variable,]
+
+#png("../Results/Figures/missingSamples.png", res = 300, width = 8000, height = 3000)
+mice_sample <- aggr(assays(Data_se_comp)$Loess, col=c('navyblue','yellow'),
+ numbers=TRUE, sortVars=TRUE,
+ labels=names(assays(Data_se_comp)$Loess), cex.axis=.4,
+ gap=2, ylab=c("Missing data","Pattern"))
+#dev.off()
+
+imp <- mice(assays(Data_se_comp)$Loess, maxit=0)
+predM = imp$predictorMatrix
+meth = imp$method
+
+imp2 <- mice(assays(Data_se_comp)$Loess, maxit = 5, 
+             predictorMatrix = predM, 
+             method = meth, print =  FALSE)
+imp3 <-  mice::complete(imp2, 1)
+
+assays(Data_se_comp)$imputed <- imp3
+
+#saveRDS(Data_se_comp, "../Data/data_sumExpImputed.rds")
+```
+
+____________
+
+
+```{r}
+
+Data_se <- readRDS("../Data/data_sumExpImputed.rds")
+Data_se_comp <- readRDS("../Data/data_sumExpImputed.rds")
+Data_se$Location <- as.factor(Data_se$Location)
+Data_se$Gender <- as.factor(Data_se$Gender)
+Data_se$Category <- as.factor(Data_se$Category)
+Data_se$Age <- as.numeric(Data_se$Age)
+
+design <- model.matrix(~1+Data_se$Age)
+colnames(design) <- c("(Intercept)", "Age")
+fitAgeMain <- lmFit((assays(Data_se)$Loess), design = design)
+
+fitAgeMain <- eBayes(fit = fitAgeMain)
+
+AgeMain <-topTable(fitAgeMain, p.value = 0.05, number = Inf, coef = "Age") 
+dim(AgeMain)
+```
+
+
+```{r}
+# Data_se$Location <- as.factor(Data_se$Location)
+# Data_se$Gender <- as.factor(Data_se$Gender)
+# Data_se$Category <- as.factor(Data_se$Category)
+# Data_se$Age <- as.numeric(Data_se$Age)
+
+designc <- model.matrix(~1+Data_se_comp$Age)
+colnames(designc) <- c("(Intercept)", "Age")
+fitAgeMainC <- lmFit((assays(Data_se_comp)$Loess), design = designc)
+
+fitAgeMainC <- eBayes(fit = fitAgeMainC)
+
+AgeMainC <-topTable(fitAgeMainC, p.value = 0.05, number = Inf, coef = "Age") 
+dim(AgeMainC)
+```
+
+## Age in gender and BMI adjusted model
+
+```{r}
+Data_bmi <- Data_se[, !is.na(Data_se$BMI)]
+design1 <- model.matrix(~1+ Data_bmi$Gender+ Data_bmi$BMI + Data_bmi$Age )
+head(design1)
+colnames(design1) <- c("(Intercept)", "Gender", "BMI", "Age")
+fitAgeadj <- lmFit((assays(Data_bmi)$Loess), design = design1)
+
+fitAgeadj <- eBayes(fit = fitAgeadj)
+
+Ageadj <-topTable(fitAgeadj, p.value = 0.05, number = Inf, coef = "Age") 
+#ressLocation <-topTable(fits, p.value = 0.05, number = Inf, coef = "Location") 
+Genderadj <-topTable(fitAgeadj, p.value = 0.05, number = Inf, coef = "Gender") 
+BMIadj <-topTable(fitAgeadj, p.value = 0.05, number = Inf, coef = "BMI")
+
+dim(Ageadj)
+dim(Genderadj)
+dim(BMIadj)
+```
+
+
+
+## PCA analyses 
+
+```{r, eval = TRUE, echo = FALSE, fig.width=10, fig.height=18, warning = FALSE, message= FALSE}
+is.na(assays(Data_se_comp)$imputed) %>% sum()
+
+pcaobjl <- prcomp(x=t(assays(Data_se_comp)$imputed))
+
+percentVarl <- pcaobjl$sdev^2/sum(pcaobjl$sdev^2)
+
+pcamatl1 <- as.data.frame(pcaobjl$x)
+
+pcamatl2 <- as.data.frame(merge(pcamatl1,colData(Data_se_comp),by=0))
+pcamatl2
+```
+
+
+## Cluster samples
+
+```{r, eval = TRUE, echo = FALSE, fig.width=10, fig.height=18, warning = FALSE, message= FALSE}
+distsl <- dist(t(assays(Data_se_comp)$imputed))
+plot(hclust(distsl))
+```
+
+
+```{r}
+
+
+```
+
+## Explained varianve by PCs
+
+```{r}
+png("../Results/Figures/PC_VariancePlot.png", units = "cm", height = 24, width = 20,res = 300)
+barplot(percentVarl[1:10]*100, ylab = "Percent varinace explained", xlab = "PC 1 to 10"  ,main = "Percent variace explained by first 10 PCs (loess)", col = "purple")
+dev.off()
+```
+
+## Correlation of priciple compenents with Phenotype data
+
+```{r}
+pheno <- pcamatl2[, c("Gender",  "Age", "BMI", "Category", "Location","CRPL3", "UA2", "HDL", "LDL", "TRIGL")]
+
+pheno$gender <- factor(pheno$gender)
+pheno$batch <- factor(pheno$batch)
+pheno$npd <- factor(pheno$npd)
+pheno$ind <- factor(pheno$ind)
+#cor(c(pcamat2[,2:11]), pcamat2$sizeFactor)
+
+pc_adj_rsq_l <-matrix(NA,ncol= 10, nrow=dim(pheno)[2])
+
+for(i in 1:dim(pheno)[2]) {
+  
+pc_adj_rsq_l[i,] <- apply(pcamatl2[,2:11], 2, function(x) summary(lm(x~pheno[,i]))$adj.r.squared)
+
+}
+colnames(pc_adj_rsq_l)<-colnames(pcamatl2[,2:11])
+rownames(pc_adj_rsq_l)<-colnames(pheno)
+
+
+png("../Results/Figures/corrPlot.png", units = "cm", height = 24, width = 20,res = 300)
+pheatmap(pc_adj_rsq_l, display_numbers=TRUE, fontsize=12, cluster_cols=FALSE, main="Adj R^2 of Association between PCs and clinical variables")
+dev.off()
+```
+
+## Test for Age, location and Age*location interaction (proteins with missingness removed)
+
+
+```{r}
+design2 <- model.matrix(~1+ Data_se_comp$Gender+ Data_se_comp$Age +Data_se_comp$Location + Data_se_comp$Age*Data_se_comp$Location )
+head(design1)
+colnames(design2) <- c("(Intercept)", "Gender", "Age", "Location", "AgeLocInt")
+fitint <- lmFit((assays(Data_se_comp)$Loess), design = design2)
+
+fitint<- eBayes(fit = fitint)
+Results_adjuested <- list()
+Results_adjuested$ressAge <-topTable(fitint, number = Inf, coef = "Age") %>% rownames_to_column(var = "protein")
+Results_adjuested$ressLocation <-topTable(fitint,  number = Inf, coef = "Location") %>% rownames_to_column(var = "protein")
+Results_adjuested$ressGender <-topTable(fitint,  number = Inf, coef = "Gender") %>% rownames_to_column(var = "protein")
+Results_adjuested$ressAgeLoc <-topTable(fitint,  number = Inf, coef = "AgeLocInt") %>% rownames_to_column(var = "protein")
+#writexl::write_xlsx(Results_adjuested, "../Results/DE_proteins_Age_Gender_Location_Int.xlsx")
+#summay
+```
+
+```{r}
+suppressMessages(suppressWarnings(library(EnhancedVolcano)))
+ev <-EnhancedVolcano2(Results_adjuested$ressAge,
+                lab = Results_adjuested$ressAge$protein,
+                x = 'logFC',
+                y = 'adj.P.Val',
+                pCutoff = 0.05,
+                labSize = 2,
+                ylim = c(0, max(-log10(Results_adjuested$ressAge$adj.P.Val), na.rm=TRUE) + 1),
+                FCcutoff = 0.01, 
+               xlim = c(min(Results_adjuested$ressAge$logFC) - 0.01, max(Results_adjuested$ressAge$logFC)+0.01), xlab = "effect size",legendLabels = c("Not significant",  "","adj. P val < 0.05", "adj Pval < 0.05 & effect size >/< 0.01"),
+               
+              
+                
+                #transcriptPointSize = 1.5,
+                     
+                title = "Ageing associated proteins",
+                subtitle = "", 
+                boxedLabels = FALSE,
+                shadeBins = 4, 
+               legendLabSize = 10)
+
+ggsave("../Results/Figures/VolcanoAgeing.png", width = 7, height = 9)
+```
+
+## Test for location with full data set and plot
+
+```{r}
+design2 <- model.matrix(~1+ Data_se$Gender+ Data_se$Age +Data_se$Location + Data_se$Age*Data_se$Location )
+head(design1)
+colnames(design2) <- c("(Intercept)", "Gender", "Age", "Location", "AgeLocInt")
+fitint <- lmFit((assays(Data_se)$Loess), design = design2)
+
+fitint<- eBayes(fit = fitint)
+
+ressAge <-topTable(fitint, p.value = 0.05, number = Inf, coef = "Age", lfc = 0.01) 
+ressLocation <-topTable(fitint, p.value = 0.05, number = Inf, coef = "Location") 
+ressGender <-topTable(fitint, p.value = 0.05, number = Inf, coef = "Gender") 
+ressAgeLoc <-topTable(fitint, p.value = 0.05, number = Inf, coef = "AgeLocInt") 
+
+
+```
+
+## Heatmap for significantly proteins with age
+
+```{r}
+intData <- assays(Data_se)$Loess[rownames(ressAgeLoc),]
+png("../Results/Figures/HeatmapInt.png", units = "cm", height = 30, width = 30,res = 300)
+pheatmap(t(intData), display_numbers=FALSE, fontsize=7, cluster_cols=FALSE, cluster_rows = TRUE, scale = "column")
+dev.off()
+```
+
+## Heatmap for proteins significantly associated with age
+
+```{r}
+ageData <- assays(Data_se)$Loess[rownames(ressAge),]
+png("../Results/Figures/HeatmapAge.png", units = "cm", height = 35, width = 30,res = 300)
+pheatmap((ageData), display_numbers=FALSE, fontsize=7, cluster_cols=TRUE, cluster_rows = TRUE,  scale = "row", )
+dev.off()
+```
+
+## An example for interaction plot
+
+```{r}
+#t(intData)
+tDatat <- cbind(as.data.frame(colData(Data_se_comp)),t(intData))
+png("../Results/Figures/P39060_interaction.png", units = "cm", height = 35, width = 30,res = 300)
+qplot(x = Age, y = P39060, facets = ~Location, data = tDatat) +
+  geom_smooth(method = "lm")
+dev.off()
+```
+
+```{r}
+tDatat2 <- cbind(as.data.frame(colData(Data_se_comp))[, c("Age", "Location")],t(intData))
+tDatat2 %>% 
+    gather(key, value, -Age, -Location) %>% 
+    ggplot(aes(x = Age, y = value), color= Location) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    facet_grid(~key, scales = "free")
+
+tDatat2a <- tDatat2 %>%  gather(key, value, -Age, -Location)
+tDatat2a$key <- as.character(tDatat2a$key)
+tDatat2v <-  tDatat2 %>% filter(Location=="Village") %>%  gather(key, value, -Age, -Location)
+tDatat2c <- tDatat2 %>% filter(Location=="City") %>%  gather(key, value, -Age, -Location)
+
+int.plot <- function(df, na.rm = TRUE, ...){
+  
+  # create list of counties in data to loop over 
+  protein_list <- unique(df$key)
+  
+for (i in seq_along(protein_list)) { 
+
+   plot <- 
+       ggplot(subset(df, df$key==protein_list[i]), aes(x = Age, y = value, colour= Location)) +
+    geom_point(aes(colour = factor(Location)),  size = 3) +
+    geom_smooth(method = "lm", size=2) +
+    # geom_smooth(method = "lm", data = tDatat2c , color="blue") + 
+      theme_pander() +
+      #theme(legend.position="none")   + 
+      
+      scale_y_continuous("Protein Intensity", 
+                         limits=c(min(df$value[df$value==protein_list[i]]), max(df$value[df$value==protein_list[i]]))) +
+      scale_x_continuous("Age in Years") +
+      
+      ggtitle(paste( protein_list[i],' \n',"Intensity in Location village and city" ,
+                    sep=''))
+    
+   # save plots as .png
+     ggsave(plot, file=paste("../Results/Figures/",
+                            protein_list[i], ".png", sep=''), 
+            scale=2,
+            units = "cm", height = 15, width = 10)
+   
+    # save plots as .pdf
+   ggsave(plot, file=paste("../Results/Figures/",
+                            protein_list[i], ".pdf", sep=''), scale=2,
+            units = "cm", height = 15, width = 10)
+    
+    # print plots to screen
+   
+    print(plot)
+}
+}
+
+int.plot(tDatat2a)
+  
+    tDatat2 %>% 
+    gather(key, value, -Age, -Location) %>% 
+    ggplot(aes(x = Age, y = value), color= Location) +
+    geom_point(color="grey") +
+    geom_smooth(method = "lm", data = tDatat2v , color="red") +
+    geom_smooth(method = "lm", data = tDatat2c , color="blue") +
+    facet_grid(~key, scales = "free")
+```
+
+
+## Test the UA2 variable
+
+```{r}
+
+design3 <- model.matrix(~1+ Data_se_comp$Gender+ Data_se_comp$UA2 )
+
+colnames(design3) <- c("(Intercept)", "Gender", "UA2")
+fitUA2 <- lmFit((assays(Data_se_comp)$Loess), design = design3)
+
+fitUA2<- eBayes(fit = fitUA2)
+Results_UA2 <- list()
+Results_UA2$Results_UA2<- topTable(fitUA2, number = Inf, coef = "UA2") %>% rownames_to_column(var = "protein")
+
+
+
+#writexl::write_xlsx(Results_UA2, "../Results/DE_proteins_UA1.xlsx")
+#summay
+```
+
+```{r}
+design4 <- model.matrix(~1+ Data_se_comp$Gender+ Data_se_comp$UA2 + Data_se_comp$Age + Data_se_comp$Age*Data_se_comp$UA2 )
+
+colnames(design4) <- c("(Intercept)", "Gender", "UA2", "Age", "UA2AgeInt")
+fitUA3 <- lmFit((assays(Data_se_comp)$Loess), design = design4)
+
+fitUA4<- eBayes(fit = fitUA3)
+
+Results_UA2$UA2AgeInt<- topTable(fitUA4, number = Inf, coef = "UA2AgeInt") %>% rownames_to_column(var = "protein")
+
+writexl::write_xlsx(Results_UA2, "../Results/DE_proteins_UA2.xlsx")
+```
+
+
+```{r}
+
+suppressMessages(suppressWarnings(library(EnhancedVolcano)))
+ev <-EnhancedVolcano2(Results_UA2$Results_UA2,
+                lab = Results_UA2$Results_UA2$protein,
+                x = 'logFC',
+                y = 'adj.P.Val',
+                pCutoff = 0.05,
+                labSize = 2,
+                ylim = c(0, max(-log10(Results_UA2$Results_UA2$adj.P.Val), na.rm=TRUE) + 1),
+                FCcutoff = 0.01, 
+               xlim = c(min(Results_UA2$Results_UA2$logFC) - 0.01, max(Results_UA2$Results_UA2$logFC)+0.01), xlab = "effect size",legendLabels = c("Not significant",  "","adj. P val < 0.05", "adj Pval < 0.05 & effect size >/< 0.01"),
+               
+              
+                
+                #transcriptPointSize = 1.5,
+                     
+                title = "UA2 associated proteins",
+                subtitle = "", 
+                boxedLabels = FALSE,
+                shadeBins = 4, 
+               legendLabSize = 10)
+
+ggsave("../Results/Figures/VolcanoUA2.png", width = 7, height = 9)
+```
+```
+
+
+```{r}
+intData2 <- assays(Data_se)$Loess[Results_UA4$protein[1:2],]
+#t(intData)
+tDatat2 <- cbind(as.data.frame(colData(Data_se_comp)),t(intData2))
+png("../Results/Figures/P39060_interaction.png", units = "cm", height = 35, width = 30,res = 300)
+qplot(x = log(UA2), y = log(P04217), data = tDatat2, facets = ~Category) + 
+  geom_smooth(method = "lm")
+dev.off()
+```
+```
+
+## Gene set enrichment analyses MSigDb
+
+### Load gene sets
+
+```{r, message=FALSE, warning=FALSE}
+library(msigdbr)
+library(clusterProfiler)
+
+m_df <- msigdbr(species = "Homo sapiens")
+hm_gsig <-m_df %>% filter(gs_cat=="H") %>% dplyr::select(gs_name, gene_symbol) # Hallmark genesets
+C5_gsig <-m_df %>% filter(gs_cat=="C5") %>% dplyr::select(gs_name, gene_symbol) # Go terms mouse
+C2_gsig <-m_df %>% filter(gs_cat=="C2" & gs_subcat == "CP:KEGG") %>% dplyr::select(gs_name, gene_symbol) # Curated gene sets (Kegg pathways)
+C3_gsig <-m_df %>% filter(gs_cat=="C3" & gs_subcat == "TFT:GTRD") %>% dplyr::select(gs_name, gene_symbol) # Motifs (Trancription factor targets)
+C7_gsig <-m_df %>% filter(gs_cat=="C7") %>% dplyr::select(gs_name, gene_symbol) # C7 (immunologic signatures, 4872 gene sets)
+
+```
+
+### Gene Set Enrichment analyses
+
+```{r}
+Ageing_Patways <- list()
+W1 <-Ageadj$logFC
+names(W1)<- rowData(Data_se_comp)[rownames(Ageadj), ]$gene
+W1 <- sort((W1), decreasing = TRUE) 
+W1 <- W1[!duplicated(names(W1))]
+#mutate(rank = rank(log2FoldChange,  ties.method = "random")) 
+Ageing_Patways$Hallmark <-GSEA(W1, TERM2GENE = hm_gsig, exponent = 1, 
+                            #nPerm = 10000, 
+             pvalueCutoff = 0.2, minGSSize = 3, maxGSSize = 600,  verbose = FALSE, by="fgsea", eps = 0) %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("HALLMARK_"= "", "_"=" ")))
+
+Ageing_Patways$kegg <-GSEA(W1, TERM2GENE = C2_gsig, exponent = 1, 
+                        #nPerm = 10000, 
+             pvalueCutoff = 0.2, minGSSize = 3, maxGSSize = 600,  verbose = FALSE, by="fgsea", eps = 0) %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("KEGG_"= "", "_"=" ")))
+
+Ageing_Patways$Regulation <-GSEA(W1, TERM2GENE = C3_gsig, exponent = 1, 
+                              #nPerm = 10000, 
+                              pvalueCutoff = 0.2, minGSSize = 3, maxGSSize = 600,  verbose = FALSE, by="fgsea", eps = 0) %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"))
+
+Ageing_Patways$GO <-GSEA(W1, TERM2GENE = C5_gsig, exponent = 1, 
+                      #nPerm = 10000,  
+                      pvalueCutoff = 0.2, minGSSize = 3, maxGSSize = 600,  verbose = FALSE, by="fgsea", eps = 0) %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("GO_"= "", "_"=" ")))
+
+
+Ageing_Patways$Immunological <-GSEA(W1, TERM2GENE = C7_gsig, exponent = 1, 
+                                 #nPerm = 10000, 
+             pvalueCutoff = 0.2, minGSSize = 3, maxGSSize = 600,  verbose = FALSE, by="fgsea", eps = 0) %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"))
+
+
+# writexl::write_xlsx(Ageing_Patways, "../Results/Gene_sets.xlsx")
+
+  
+```
+
+
+
+```{r}
+library(clusterProfiler)
+data(geneList, package="DOSE")
+proteinsAge <- Results_adjuested$ressAge %>% filter(adj.P.Val <0.05)
+proteinsAge$protein
+
+gene <- proteinsAge$protein
+
+
+
+## Gene/Protein annotations from biomaRt.
+
+library(biomaRt)
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+filters = listFilters(ensembl)
+filters[1:10,]
+attributes = listAttributes(ensembl)
+attributes[1:15,]
+searchAttributes(mart = ensembl, pattern = "uniprot")
+
+#genes <- rowData(Data_se)$gene
+proteins <- rowData(Data_se)$protein
+genes
+
+hgnc_symbol
+
+genes2 <-getBM(attributes=c('hgnc_symbol', 'entrezgene_id', 'description'), 
+      filters = 'uniprotswissprot', 
+      values = gene, 
+      mart = ensembl
+        )
+
+#select(ensembl)
+```
+
+
+```{r}
+library("org.db")
+ggo <- groupGO(gene     = as.character(genes2$entrezgene_id),
+               OrgDb    = org.Hs.eg.db,
+               ont      = "CC",
+               level    = 3,
+               readable = TRUE)
+
+head(ggo)
+```
+
+```{r}
+ego <- enrichGO(gene          = as.character(genes2$entrezgene_id),
+                universe      = as.character(genes2$entrezgene_id),
+                OrgDb         = org.Hs.eg.db,
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                qvalueCutoff  = 01,
+        readable      = TRUE)
+head(ego)
+```
+
+```{r}
+kk <- enrichKEGG(gene         = as.character(genes2$entrezgene_id),
+                 organism     = 'hsa',
+                 pvalueCutoff = 0.05)
+
+```
+
+```{r}
+ mkk <- enrichMKEGG(gene = as.character(genes2$entrezgene_id),
+                   organism = 'hsa',
+                   pvalueCutoff = 0.05,
+                   qvalueCutoff = 1,minGSSize = 2
+                )
+head(mkk)                   
+```
+
+
+```{r}
+enriched <- list()
+enriched$KEGG_KK <-as.data.frame(kk)
+enriched$KEGG_mKK <- as.data.frame(mkk)
+writexl::write_xlsx(enriched, "../Results/Enriched_KEGG.xlsx")
+```
+
+# Gene Set enrichment analyses
+
+
+Differential gene expression analyses was followed by gene set enrichment analyses to understand biological pathways in the three comparisons. 
+
+```{r, include=FALSE}
+row_meta[de.common1,"symbol"]$symbol
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+mat1<-assays(Sum_Expe_filtered)$counts
+rownames(mat1)<-row_meta_filtered$ENTREZID
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+#install.packages("msigdbr")
+library(msigdbr)
+library(clusterProfiler)
+m_df <- msigdbr(species = "Mus musculus")
+hm_gsig <-m_df %>% filter(gs_cat=="H") %>% dplyr::select(gs_name, gene_symbol) # Hallmark genesets
+C5_gsig <-m_df %>% filter(gs_cat=="C5") %>% dplyr::select(gs_name, gene_symbol) # Go terms mouse
+C2_gsig <-m_df %>% filter(gs_cat=="C2" & gs_subcat == "CP:KEGG") %>% dplyr::select(gs_name, gene_symbol) # Curated gene sets (Kegg pathways)
+C3_gsig <-m_df %>% filter(gs_cat=="C3" & gs_subcat == "TFT") %>% dplyr::select(gs_name, gene_symbol) # Motifs (Trancription factor targets)
+C7_gsig <-m_df %>% filter(gs_cat=="C7") %>% dplyr::select(gs_name, gene_symbol) # C7 (immunologic signatures, 4872 gene sets)
+```
+
+## Hallmark gene sets
+
+Provided figures and results.
+
+```{r, eval=FALSE, results='hide', message=FALSE, warning=FALSE, include=FALSE}
+w1_hm <-GSEA(W1, TERM2GENE = hm_gsig, exponent = 1, nPerm = 10000, 
+             pvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 600,  verbose = FALSE, by="fgsea") %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("HALLMARK_"= "", "_"=" ")))
+
+W4_hm <- GSEA(W4, TERM2GENE = hm_gsig, exponent = 1, nPerm = 10000, 
+             pvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 600,  verbose = FALSE, by="fgsea") %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("HALLMARK_"= "", "_"=" ")))
+W4C_hm <- GSEA(W4C, TERM2GENE = hm_gsig, exponent = 1, nPerm = 10000, 
+             pvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 600,  verbose = FALSE, by="fgsea") %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("HALLMARK_"= "", "_"=" ")))
+Tu_hm <- GSEA(Tu, TERM2GENE = hm_gsig, exponent = 1, nPerm = 10000, 
+             pvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 600,  verbose = FALSE, by="fgsea") %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("HALLMARK_"= "", "_"=" ")))
+
+hm_results <- list(w1_hm=as.data.frame(w1_hm) , W4_hm = as.data.frame(W4_hm), W4C_hm = as.data.frame(W4C_hm),Tu_hm = as.data.frame(Tu_hm))
+write_xlsx(hm_results, "Results/hm_results_new.xlsx")
+```
+
+
+```{r, eval=FALSE, results='hide', message=FALSE, warning=FALSE, include=FALSE}
+for (i in 1:length(hm_results)){
+  name = names(hm_results)[i]
+ g = list()
+  g[[i]] = ggplot(hm_results[[i]], aes(reorder(ID, NES), NES)) +
+  geom_segment( aes(reorder(ID, NES), xend=ID, y=0, yend=NES)) +
+  geom_point( size=5, aes( fill = enrichment),
+              shape=21, stroke=2) +
+    scale_fill_manual(values = c("Down-regulated" = "dodgerblue",
+                      "Up-regulated" = "firebrick") ) +
+    coord_flip() +
+    labs(x="Gene Set", y="Normalized Enrichment Score",
+         title="GSEA - Hallmark") + 
+    theme_minimal()
+png(file.path("Results/Figures", paste0("GSEA_Hallmark_", paste(name), ".png")),  width = 1600, height = 1800, units = "px", res =180)
+print(g[[i]])
+dev.off()
+}
+```
+
+
+
+
+```{r, eval=FALSE, results='hide', message=FALSE, warning=FALSE, include=FALSE}
+g = list()
+  g$g1 = ggplot(hm_results$w1_hm, aes(reorder(ID, NES), NES)) +
+  geom_segment( aes(reorder(ID, NES), xend=ID, y=0, yend=NES)) +
+  geom_point( size=5, aes( fill = enrichment),
+              shape=21, stroke=2) +
+    scale_fill_manual(values = c("Down-regulated" = "dodgerblue",
+                      "Up-regulated" = "firebrick") ) +
+    coord_flip() +
+    labs(x="Gene Set", y="Normalized Enrichment Score",
+         title="GSEA - Hallmark") + 
+    theme_minimal()
+png("Results/Figures/GSEA_Hallmark_Week1.png",  width = 1600, height = 1800, units = "px", res =180)
+g$g1
+dev.off()
+
+g$g2 = ggplot(hm_results$W4_hm, aes(reorder(ID, NES), NES)) +
+  geom_segment( aes(reorder(ID, NES), xend=ID, y=0, yend=NES)) +
+  geom_point( size=5, aes( fill = enrichment),
+              shape=21, stroke=2) +
+    scale_fill_manual(values = c("Down-regulated" = "dodgerblue",
+                      "Up-regulated" = "firebrick") ) +
+    coord_flip() +
+    labs(x="Gene Set", y="Normalized Enrichment Score",
+         title="GSEA - Hallmark") + 
+    theme_minimal()
+png("Results/Figures/GSEA_Hallmark_Week4.png",  width = 1600, height = 1800, units = "px", res =180)
+g$g2
+dev.off()
+
+g$g3 = ggplot(hm_results$W4C_hm, aes(reorder(ID, NES), NES)) +
+  geom_segment( aes(reorder(ID, NES), xend=ID, y=0, yend=NES)) +
+  geom_point( size=5, aes( fill = enrichment),
+              shape=21, stroke=2) +
+    scale_fill_manual(values = c("Down-regulated" = "dodgerblue",
+                      "Up-regulated" = "firebrick") ) +
+    coord_flip() +
+    labs(x="Gene Set", y="Normalized Enrichment Score",
+         title="GSEA - Hallmark") + 
+    theme_minimal()
+png("Results/Figures/GSEA_Hallmark_Week4vsC.png",  width = 1600, height = 1800, units = "px", res =180)
+g$g2
+dev.off()
+
+g$g4 = ggplot(hm_results$W4C_hm, aes(reorder(ID, NES), NES)) +
+  geom_segment( aes(reorder(ID, NES), xend=ID, y=0, yend=NES)) +
+  geom_point( size=5, aes( fill = enrichment),
+              shape=21, stroke=2) +
+    scale_fill_manual(values = c("Down-regulated" = "dodgerblue",
+                      "Up-regulated" = "firebrick") ) +
+    coord_flip() +
+    labs(x="Gene Set", y="Normalized Enrichment Score",
+         title="GSEA - Hallmark") + 
+    theme_minimal()
+png("Results/Figures/GSEA_Hallmark_TumorvsC.png",  width = 1600, height = 1800, units = "px", res =180)
+g$g2
+dev.off()
+
+
+p1 <- dotplot(w1_hm, showCategory=40, font.size = 4, size=) + ggtitle("Week 1 vs. C") 
+p2 <- dotplot(W4_hm, showCategory=40, font.size = 4) + ggtitle("Week4 vs. Week1")
+p3 <- dotplot(W4C_hm, showCategory=40, font.size = 4) + ggtitle("Week4 vs. C")
+p4 <- dotplot(Tu_hm, showCategory=40, font.size = 4) + ggtitle("Tumor vs. Week4")
+png("Results/Figures/Hall_mark_new.png", units = "cm", height = 30, width = 30, res = 500)
+ cowplot::plot_grid(p1,p2,p3,p4, ncol = 2, nrow = 2)
+dev.off()
+
+
+```
+
+## KEGG gene sets
+
+Provided figures and results.
+
+```{r, eval=FALSE, results='hide', message=FALSE, warning=FALSE, include=FALSE}
+Kegg_results <- list()
+res <- list(W1, W4, W4C, Tu)
+for (i in 1:length(res)){
+  name = names(res)[i]
+ Kegg_results[[i]] <- GSEA(res[[i]], TERM2GENE = C2_gsig, exponent = 1, nPerm = 10000, 
+             pvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 600,  verbose = FALSE, by="fgsea") %>% as.data.frame() %>% tibble() %>% mutate(enrichment= ifelse(NES > 0, "Up-regulated", "Down-regulated"), Description = stringr::str_replace_all(ID, c("KEGG_"= "", "_"=" "))) %>% as.data.frame()
+ 
+ #Kegg_results[i] <- paste(name)
+
+}
+names(Kegg_results) <- c("Week1 vs C", "Week4 vs. Week1", "Week4 vs. C", "Tumor vs. C" )
+
+write_xlsx(Kegg_results, "Results/kegg_results_New.xlsx")
+```
+
+```{r, eval=FALSE, results='hide', message=FALSE, warning=FALSE, include=FALSE}
+for (i in 1:length(Kegg_results)){
+  name = names(Kegg_results)[i]
+ g = list()
+  g[[i]] = ggplot(Kegg_results[[i]], aes(reorder(ID, NES), NES)) +
+  geom_segment( aes(reorder(ID, NES), xend=ID, y=0, yend=NES)) +
+  geom_point( size=5, aes( fill = enrichment),
+              shape=21, stroke=2) +
+    scale_fill_manual(values = c("Down-regulated" = "dodgerblue",
+                      "Up-regulated" = "firebrick") ) +
+    coord_flip() +
+    labs(x="Gene Set", y="Normalized Enrichment Score",
+         title="GSEA - Kegg pathway") + 
+    theme_minimal()
+png(file.path("Results/Figures", paste0("Kegg_", paste(name), ".png")),  width = 1600, height = 1800, units = "px", res =180)
+print(g[[i]])
+dev.off()
+}
+```
+-------------
+
+## Age related protein clustering 
+
+1. Plot for groups between 0-40, 61-60, 61-80 and 81-112.
+2. Plots for groups for age span of 10 years each
+
+## Is there a Centenars specific cluster?
+
+
+```{r}
+library(mixOmics)
+Age_data <- Data_se[rownames(AgeMain),]
+# load packages
+library(tidyverse)
+
+# read the data
+trans_cts <- assays(Age_data)[["Loess"]] %>% as.data.frame(row.names = rownames(assays(Age_data)[["Loess"]])) %>% rownames_to_column(var = "gene")
+#trans_cts <- assays(Age_data)[["imputed"]] %>% as.data.frame(row.names = rownames(assays(Age_data)[["imputed"]])) %>% rownames_to_column(var = "gene")
+sample_info <- colData(Age_data)
+sample_info$AgeGroup <- sample_info$Age %>% cut(breaks=c(0,40,60,80, 112)) %>% as.numeric()
+
+sample_info$AgeGroup10 <- sample_info$Age %>% cut(breaks=c(20,30,40,50, 60, 70, 80, 90, 112)) %>% as.numeric()
+
+sample_info$origin = ifelse( sample_info$Category== "C", "Cant", "NoCant")
+
+                       #test_result <- read_csv("./data/test_result.csv")
+
+
+
+# Summarise counts 
+    trans_cts_mean <- trans_cts %>% 
+      # convert to long format
+      pivot_longer(cols = sample_info$sampleID, names_to = "sampleID", values_to = "cts")  %>% 
+      # join with sample info table
+      full_join(sample_info, by = ("sampleID"),copy =TRUE) %>% 
+      # filter to retain only genes of interest
+      #filter(gene %in% candidate_genes) %>% 
+      # for each gene
+      group_by(gene) %>% 
+      # scale the cts column
+      mutate(cts_scaled = (cts - mean(cts))/sd(cts)) %>% 
+      # for each gene, strain and minute
+      group_by(gene, AgeGroup) %>%
+      # calculate the mean (scaled) cts
+      summarise(mean_cts_scaled = mean(cts_scaled), 
+            nrep = dplyr::n()) %>% 
+      ungroup() 
+```
+
+```{r}
+
+trans_cts_mean_ori <- trans_cts %>% 
+  # convert to long format
+  pivot_longer(cols = sample_info$sampleID, names_to = "sampleID", values_to = "cts")  %>% 
+  # join with sample info table
+  full_join(sample_info, by = ("sampleID"),copy =TRUE) %>% 
+  # filter to retain only genes of interest
+  #filter(gene %in% candidate_genes) %>% 
+  # for each gene
+  group_by(gene) %>% 
+  # scale the cts column
+  mutate(cts_scaled = (cts - mean(cts))/sd(cts)) %>% 
+  # for each gene, strain and minute
+  group_by(gene, origin, AgeGroup10) %>%
+  # calculate the mean (scaled) cts
+  summarise(mean_cts_scaled = mean(cts_scaled),
+            nrep = n()) %>% 
+  ungroup()
+```
+
+
+
+```{r}
+trans_cts_mean10 <- trans_cts %>% 
+  # convert to long format
+  pivot_longer(cols = sample_info$sampleID, names_to = "sampleID", values_to = "cts")  %>% 
+  # join with sample info table
+  full_join(sample_info, by = ("sampleID"),copy =TRUE) %>% 
+  # filter to retain only genes of interest
+  #filter(gene %in% candidate_genes) %>% 
+  # for each gene
+  group_by(gene) %>% 
+  # scale the cts column
+  mutate(cts_scaled = (cts - mean(cts))/sd(cts)) %>% 
+  # for each gene, strain and minute
+  group_by(gene, AgeGroup10) %>%
+  # calculate the mean (scaled) cts
+  summarise(mean_cts_scaled = mean(cts_scaled),
+            nrep = n()) %>% 
+  ungroup()
+```
+
+```{r}
+hclust_matrix <- assays(Age_data)[["Loess"]] %>% t() %>% 
+  # apply scalling to each column of the matrix (genes)
+  scale() %>% 
+  # transpose back so genes are as rows again
+  t()
+ gene_dist <- dist(hclust_matrix)
+ 
+```
+
+
+```{r}
+gene_hclust <- hclust(gene_dist, method = "complete")
+
+# The default `plot()` function can be used to produce a simple dendrogram
+png("../Results/Figures/Cluster_dand.png", res = 300, width =10, height = 10, units = "cm")
+plot(gene_hclust, labels = FALSE)
+abline(h = 14.2, col = "brown", lwd = 2)
+dev.off()
+```
+
+
+```{r}
+gene_hclust2 <- hclust(gene_dist, method = "average")
+
+# The default `plot()` function can be used to produce a simple dendrogram
+plot(gene_hclust2, labels = FALSE)
+abline(h = 10, col = "brown", lwd = 2)
+
+```
+
+```{r}
+gene_cluster <- cutree(gene_hclust, h = 13, 7) %>% 
+  # turn the named vector into a tibble
+  enframe() %>% 
+  # rename some of the columns
+  rename(gene = name, cluster = value)
+
+head(gene_cluster)
+```
+
+
+```{r}
+trans_cts_cluster <- trans_cts_mean %>% 
+  inner_join(gene_cluster, by = "gene")
+writexl::write_xlsx(trans_cts_cluster,"../Results/Clusters_AgeGroup.xlsx")
+head(trans_cts_cluster)
+```
+
+```{r}
+plot <- trans_cts_cluster %>% 
+  ggplot(aes(AgeGroup, mean_cts_scaled, color=factor(cluster))) +
+  geom_line(aes(group = gene))+
+    geom_smooth(stat = "smooth", size=2)+
+ theme_pander() +
+      labs(
+         colour = "Cluster ID"
+        )  +
+    theme(
+    #legend.position = c(.9, .7),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(6, 6, 6, 6)
+    ) +
+    scale_y_continuous("Mean Cluster Intensity (Scaled)") +
+      scale_x_continuous("Age groups (step size = 0-40, 41-60, 61-80, 81-112))") +
+      
+      ggtitle("Trajectories of protein clusters")
+
+     ggsave(plot, file=paste("../Results/Figures/",
+                            "Clusters", ".png", sep=''), 
+            scale=2,
+            units = "cm", height = 15, width = 20)
+   
+    # save plots as .pdf
+   ggsave(plot, file=paste("../Results/Figures/",
+                            "Clusters", ".pdf", sep=''), scale=2,
+            units = "cm", height = 15, width = 20)
+    
+   
+#+    facet_grid(cols  = vars(cluster))
+```
+
+
+
+
+
+
+
+
+
+```{r}
+trans_cts_cluster10 <- trans_cts_mean10 %>% 
+  inner_join(gene_cluster, by = "gene")
+writexl::write_xlsx(trans_cts_cluster10,"../Results/Clusters_AgeGroup10Years.xlsx")
+head(trans_cts_cluster10)
+```
+
+```{r}
+plot <- trans_cts_cluster10 %>% 
+  ggplot(aes(AgeGroup10, mean_cts_scaled, color=factor(cluster))) +
+  geom_line(aes(group = gene))+
+    geom_smooth(stat = "smooth", size=2)+
+ theme_pander() +
+      labs(
+         colour = "Cluster ID"
+        )  +
+    theme(
+    #legend.position = c(.9, .7),
+    legend.justification = c("right", "top"),
+    legend.box.just = "right",
+    legend.margin = margin(6, 6, 6, 6)
+    ) +
+    scale_y_continuous("Mean Cluster Intensity (Scaled)") +
+      scale_x_continuous("Age in Years (step size = 10y)") +
+      
+      ggtitle("Trajectories of protein clusters")
+
+     ggsave(plot, file=paste("../Results/Figures/",
+                            "Clusters10Y", ".png", sep=''), 
+            scale=2,
+            units = "cm", height = 15, width = 20)
+   
+    # save plots as .pdf
+   ggsave(plot, file=paste("../Results/Figures/",
+                            "Clusters10Y", ".pdf", sep=''), scale=2,
+            units = "cm", height = 15, width = 20)
+    
+   
+#+    facet_grid(cols  = vars(cluster))
+```
+
+
+
+## SWANDe analyses
+
+```{r}
+library("DEswan")
+```
+
+
+```{r}
+hist(Age_data$Age)
+```
+
+```{r}
+# x=cor(Age_data$Age,t(assays(Age_data)$Loess))
+# x1 = cor(Age_data$Age,t(assays(Age_data)$imputed))
+# head(agingplasmaproteome[,1:5])
+
+start_time <- Sys.time()
+# res.DEswan=DEswan(data.df = agingplasmaproteome[,-c(1:3)],
+res.DEswan=DEswan(data.df = as.data.frame(t(assays(Age_data)$Loess)),
+                  qt = Age_data$Age,
+                  window.center = seq(20,120,10),
+                  buckets.size = 20,
+                  covariates = Age_data$Gender)
+end_time <- Sys.time()
+end_time-start_time
+
+```
+
+```{r}
+res.DEswan.wide.p=reshape.DEswan(res.DEswan, parameter = 1,factor = "qt")
+
+```
+```{r}
+res.DEswan.wide.q=q.DEswan(res.DEswan.wide.p,method="BH")
+writexl::write_xlsx(res.DEswan.wide.q, "../Results/SWAN_DE_results.xlsx")
+```
+
+```{r}
+res.DEswan.wide.p.signif=nsignif.DEswan(res.DEswan.wide.p)
+toPlot=res.DEswan.wide.p.signif[1:3,]
+x=as.numeric(gsub("X","",colnames(toPlot)))
+plot(1, type = "n", xlim=c(min(x,na.rm=T),max(x,na.rm=T)),ylim=c(0,max(toPlot,na.rm=T)),ylab="# significant",xlab="age")
+for(i in 1:nrow(toPlot)){
+  lines(x,
+        toPlot[i,],type='l',lwd=i)
+}
+legend("topleft",legend = paste("p<",rownames(toPlot),sep=""),lwd=c(1,2,3))
+
+
+# head(res.DEswan.wide.q[,1:5])
+res.DEswan.wide.q.signif=nsignif.DEswan(res.DEswan.wide.q)
+#plot(res.DEswan.wide.q.signif, type="l", ylab="number of significant proteins", xlab="Age group", lwd=2)
+toPlot=res.DEswan.wide.q.signif[1:5,]
+x=as.numeric(gsub("X","",colnames(toPlot)))
+png("../Results/Figures/SWAN_DE_nsig.png", res = 300, width =15, height = 15, units = "cm")
+plot(1, type = "n", xlim=c(min(x,na.rm=T),max(x,na.rm=T)),ylim=c(0,max(toPlot,na.rm=T)),ylab="Number of significant proteins",xlab="age")
+for(i in 1:nrow(toPlot)){
+  lines(x,
+        toPlot[i,],type='l',lwd=i)
+}
+legend("topleft",legend = paste("q<",rownames(toPlot),sep=""),lwd=c(1,2,3))
+dev.off()
+```
+
+
+```{r}
+res.DEswan.wide.q.signif=nsignif.DEswan(res.DEswan.wide.q, thresholds = 0.05)  %>%  t ()%>% as.data.frame %>% rownames_to_column(var = "Age") 
+colnames(res.DEswan.wide.q.signif) <- c("Age", "n_proteins")
+res.DEswan.wide.q.signif <- res.DEswan.wide.q.signif %>% mutate(Age = gsub("X","",Age)) 
+
+gsub("X","",res.DEswan.wide.q.signif$Age)
+
+ggplot(data=res.DEswan.wide.q.signif, aes((Age), n_proteins)) +
+  geom_line()
+```
+
+```{r}
+res.DEswan.wide.q.sig <-res.DEswan.wide.q %>%  
+    pivot_longer(cols = -variable, names_to = "Age", values_to = "qval") %>%
+    filter(qval<0.05) %>%
+    mutate(Age = gsub("X","",Age))
+
+%>% 
+   #group_by( Age, variable) %>%
+      # calculate the mean (scaled) cts
+      count(Age) %>% mutate(Age = as.factor(Age))
+ 
+```
+
+```{r}
+res.DEswan.wide.coeff=reshape.DEswan(res.DEswan,parameter = 2,factor = "qt")
+toHeatmap=sign(res.DEswan.wide.coeff[,-1])*-log10(res.DEswan.wide.p[,-1])
+rownames(toHeatmap)<-res.DEswan.wide.coeff$variable
+
+pairs.breaks <- seq(-3, 3, by=0.01)
+mycol <- gplots::colorpanel(n=length(pairs.breaks)-1,low="cyan",mid="black",high="yellow")
+
+# display the colorbar
+# image(z = matrix(1:100, ncol = 1),col = mycol,xaxt = "n",yaxt = "n")
+
+gplots::heatmap.2(as.matrix(toHeatmap),
+                       cexRow=.1,cexCol=.7,
+                       trace="none",
+                       dendrogram="row",
+                       breaks=pairs.breaks, 
+                       col=mycol, 
+                       Rowv=T,key=F,
+                       Colv=F,
+                       lhei=c(0.2,10),
+                       lwid=c(.2,3)
+)
+
+```
+
+
+```{r}
+upset(res.DEswan.wide.q.signif[1,])
+
+library("UpSetR")
+
+tmp1 <- res.DEswan.wide.q
+
+rownames(tmp1) <- res.DEswan.wide.q$variable
+list1 <- lapply(colnames(tmp1), function(x) {
+  tmp1[tmp1[[x]] < 0.05, "variable"]
+})
+names(list1) <- colnames(res.DEswan.wide.q)
+png("../Results/Figures/Upset_SWANDE.png", res = 300, width =10, height = 10, units = "cm")
+upset(fromList(list1), matrix.color = "darkred", main.bar.color = "darkmagenta", sets.bar.color = "darkgreen", line.size = 1, keep.order = TRUE)
+dev.off()
+```
+
+## Comparison with Nature Benoit Lehallier et al doi https://doi.org/10.1038/s41591-019-0673-2
+
+```{r}
+AgeEffect_NatCom <- read_delim("Projects/Ageing/AgeEffect_NatCom.txt", 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+AgeEffect_NatCom$GeneID <- stringr::str_split(AgeEffect_NatCom$ID, "[.]", simplify = TRUE)[,1]
+IDs <-getBM(attributes=c('hgnc_symbol', 'entrezgene_id', 'description'),
+      filters = 'uniprotswissprot',
+      values = rowData(Data_se),
+      mart = ensembl
+        )
+dim(genes2)
+
+AgeEffect_NatCom_sig <-AgeEffect_NatCom %>% filter(q.Age<0.05 )
+sig_both <- intersect(AgeEffect_NatCom_sig$GeneID, genes2$hgnc_symbol) 
+
+measured <- intersect(rowData(Data_se)$gene, AgeEffect_NatCom$GeneID)
+measured %>% length()
+
+length(sig_both)
+
+ps <- Data_se[rowData(Data_se)$gene %in% sig_both,] %>% rownames()
+
+ps <- Results_adjuested$ressAge %>% filter(protein %in% ps)
+
+writexl::write_xlsx(ps, "../Results/Common_with_Nat_med_results.xlsx")
+
+```
+
+## Fredriks protein
+
+```{r}
+HPA045005 <- 
+    
+    rownames(Data_se)["OR4D5"]
+
+```
+

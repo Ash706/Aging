@@ -1,0 +1,3 @@
+load("/Users/cob-aaf/Documents/Projects/Ageing/Data/data_sumExpImputed.rds")
+readRDS("/Users/cob-aaf/Documents/Projects/Ageing/Data/data_sumExpImputed.rds")
+ls

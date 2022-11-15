@@ -1,0 +1,42 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+### PCA analyses 
+
+Principle component analyses was used to perform exploratory analyses of the proteomics data. Explained variance by each principle component was calculated using the output from ´prcomp´function in R. 
+Correlation between principle components and phenotype (clinical) variables was calculated using ´lm´ function in R and "adj.r.squared" values were extracted from the summary statistics produced by the ´lm´ function.
+
+##  Differetial expression analyses
+
+For differential expression analyses we used "limma" package in R. Following models were used to analyze deferentially abundant proteins.
+
+ - *Basic model* protein ~ Age
+ - *Gender and BMI adjusted model* protein ~ gender + BMI + Age
+ - *Interaction with environmental variables* protein ~ gender + bmi + Age + ENV + Age*ENV
+ 
+## Diffential expression analyses of proteins related to the UA2 variable
+
+Differential expression analyses using following models.
+
+ 1. protein ~ Gender + UA2
+ 2. protein ~ Gender + UA2 + Age + UA2*AGE
+ 
+ ## Cluster analyses to identify Age related clusters 
+
+## Age related protein clustering 
+
+To identify patterns associated with age we performed cluster analyses of on proteins associated with age. To visualize trends we create age related intervals as following.
+
+1. Plot for groups between 0-40, 61-60, 61-80 and 81-112.
+2. Plots for groups for age span of 10 years each
+
+Mean protein intensity was calculated for proteins in each cluster followed by average over each age intervals.
+
+For clustering, protein data was scaled followed by calculating dsitance between protein observation using euclidean distance. Clustering was then performed by using complete linkage between observations.
+
+## SWANDe analyses
+
+Differential expression Sliding window analysis distinguishes (DEswan) was used to identify waves of aging plasma proteins.
+Age span between 20 years to 120 years with interval size of 10 years was slected for sliding window analyses in the ´DEswan´ function implemented i ´DEswan´ package. Sex was used as covariate in the DEswan analyses.

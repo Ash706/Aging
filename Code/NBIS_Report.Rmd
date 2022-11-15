@@ -1,0 +1,617 @@
+---
+title: "Diffuse large B-cell lymphoma (DLBCL) – a proteogenomic study on immunochemotherapy resistance and predictive biomarkers"
+author: "Ashfaq Ali"
+date: "5/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Libraries , message=FALSE, cache=FALSE,message=FALSE}
+#libraries
+#suppressMessages(library(miodin))
+suppressMessages(library(ggplot2))
+suppressMessages(library(EnhancedVolcano))
+suppressMessages(library(pheatmap))
+suppressMessages(library(tidyverse))
+suppressMessages(library(biomaRt))
+suppressMessages(library(GenomicFeatures))
+suppressMessages(library(GenomicRanges))
+suppressMessages(library(BSgenome))
+suppressMessages(library(DESeq2))
+suppressMessages(library(IRanges))
+suppressMessages(library(MultiAssayExperiment))
+suppressMessages(library(SummarizedExperiment))
+suppressMessages(library(MultiDataSet))
+library(limma)
+library(Glimma)
+library(edgeR)
+library(Hmisc)
+library(impute)
+library(mixOmics)
+hmcols<-colorRampPalette(c("blue","white","red"))(256)
+
+```
+
+
+ - *NBIS Issue Number: 4945*
+ - *Assignee:* Ashfaq Ali (ashfaq.ali@nbis.se)
+ - *NBIS Coordinator:* Fredrik Levander (Fredrik.Levander@nbis.se)
+ - *Project PI:* Per Ola Andersson 
+ - *PI affiliation:* Gothernerg University (per-ola.andersson@vgregion.se)
+
+## Agreement and summary of delivered results
+
+A) The agreement included following analyses. 
+1. Differential expression analyses for relapse vs. cured individuls for protein and RNA-seq data
+2. Correlation between RNA and protein data after differential expression analyses.
+5. Netwrok analyses and gene set enrichment analyses
+Project agreement was adjusted after consultation of results with the PI to exclude differential gene and protein experssion analyses as it was already performed. The correlation between fold changes for ref vs. relapse comparisons arising from protein and RNA-seq data was not strong. Also, the gene set ernichment analyses based on univariate analyses did not indicate strong overlap between RNA-seq and protein data primar"ily because no enrichment for gene sets was observed for "Relapse", "Hans" and "doubleExpresser" phenotypes. This is probably due to smaller number of proteins measured that donot overlap many gene sets reported. Several gene sets were enriched for RNA-seq data and were reported to to the PI.
+
+B) Following the first round of analyses, following analyses was aggreed.
+3. Data integration using Diablo method implemented in "mixomics" package for "Hans", "doublexpresser" and "relapse" varialble.
+4. Report results from integration and most important variables from RNA and protein data for each of the Phenotype
+6. Provide visualizations of the results.
+
+In addition to results provided in A and B, a preliminary version of analyses from B was sent out due to pressing deadline of a grant. Those results should not be considered from future interpretations. Although the results largely overlap with the current analyses, there may be discrepancies due to fewer iterations performed (10) to save time compared with 50 iterations used for variable selection in the current analyses.
+
+
+
+## Methods Description
+
+The core DIABLO method extends Generalized Canonical Correlation Analysis (Tenenhaus and Tenenhaus 2011), which contrary to what its name suggests, generalises PLS for multiple matching data sets, and the sparse sGCCA method (Tenenhaus et al. 2014). Mixomics package extended these methods for different types of analyses, including unsupervised N-integration (block.pls, block.spls) which were used for this studies. The aim of N-integration with our sparse methods is to identify correlated (or co-expressed) variables measured on heterogeneous data sets which also explain the categorical outcome of interest (supervised analysis). 
+
+Dimension reduction is achieved by projecting the data into the space spanned by the principal components (PC). In practice, it means that each sample is assigned a score on each new PC dimension - this score is calculated as a linear combination of the original variables to which a weight is applied. The weights of each of the original variables are stored in the so-called loading vectors associated to each PC. The dimension of the data is reduced by projecting the data into the smaller subspace spanned by the PCs, while capturing the largest sources of variation between samples.
+
+
+To identify most important RNA and protein variables, we used "block.splsda" function implemented in the "mixomics" package in R. Before performing the feature selection, we used 3 fold validation with 10 repetitions to identify number of important principal components for both RNN and Protein data. We tested up-to 8 principle components among which first three components explained most of the variation in the data. The further tuning for number of features and analyses, the number of principle components were limited to 4 to allow any variation not captured by the first three components by chance.
+
+To tune the number of features for each principle component for both data sets, we used step wise selection where 5 to 15 features were used with step size 1 and 20 to 60 features with s a step size of 10. The number for features suggested for each component for both data sets were used as suggested by "tune.block.splsda" function using 10 fold validation across 10 repetitions.
+
+
+Variable selection can be performed using the sparse version of PCA implemented in spca (Shen and Huang 2008). The user needs to provide the number of variables to select on each PC. Here for example we ask to select the top 15 genes contributing to the definition of PC1, the top 10 genes contributing to PC2 and the top 5 genes for PC3 (keepX=c(15,10,5)).
+
+
+Selected variables can be identified on each component with the selectVar function. Here the coefficient values are extracted, but there are other outputs, see ?selectVar:
+
+Those values correspond to the loading weights that are used to define each component. A large absolute value indicates the importance of the variable in this PC. Selected variables are ranked from the most important (top) to the least important.
+
+### The circos plot 
+
+The circos plot represents the correlations between variables of different types, represented on the side quadrants. The circos plot is built based on a similarity matrix. A cutoff argument can be included to visualise correlation coefficients above this threshold in the multi-omics signature. The line indicates to expression level in each dataset.
+
+
+### cimDiablo
+
+The cimDiablo function is a clustered image map specifically implemented to represent the multi-omics molecular signature expression for each sample. It is very similar to a classic hierarchical clustering.
+
+Clustered Image Maps (CIM), also called ‘clustered correlation’ or ‘heatmaps’ to represent either the expression value of a single data set, or the Pearson correlation between two matched data sets. This type of representation is based on a hierarchical clustering simultaneously operating on the rows and columns of a real-valued similarity matrix. This is graphically represented as a 2-dimensional coloured image, where each entry of the matrix is coloured on the basis of its value, and where the rows and columns are reordered according to the hierarchical clustering. Dendrograms (tree diagrams) illustrating the arrangement of the clusters produced by the hiearchical clustering are added to the left (or right) side and to the top (or bottom) of the image. The color in the heatmap indicates the nature of the correlation between subsets of variables (positive, negative, strong or weak), while the dendrogram indicate the proximity between correlated variables. In practice, one looks for well defined large rectangles or squares of the same color corresponding to long branches of the dendrograms. 
+
+
+### CorrelationCirclePlot
+
+Correlation Circle plots were primarily used for PCA outputs to visualise the relationship between variates and variables of the same type, where one single omics data set is analysed.
+
+The use of such a graphical tool was then generalised to represent variables of two different types using statistical integrative approaches such as Canonical Correlation Analysis and Partial Least Squares regression. It enables a graphical examination of the relationships between variables and variates. In this plot, the coordinates of the variables are obtained by calculating the correlation between each original variable and their associated component. Because variables are usually centered and standardized, the correlation between each variable and a component is simply the projection of the variable on the axis defined by the component.
+
+
+### plotLoadings
+
+The plotLoadings function visualises the loading weights of each selected variables on each component and each data set. The color indicates the class in which the variable has the maximum level of expression (contrib = "max"), on average (method="mean").
+
+The excel file contains most contributing genes and proteins. The annoations are provided in the respctive sheet where value is provided as most contributing genes/proteins being ranked at the top and the bottom.
+
+
+### plotDiablo
+
+A global overview of the correlation structure at the component level can be represented with the plotDiablo function. It plots the components across the different data sets for a given dimension. Colours indicate the class of each sample. Here, we can see that a strong correlation is extracted by DIABLO between the mRNA and protein data sets. 
+
+
+### Data analyses steps
+
+The RNA data provided by the user was filtered and trnasfomed usning zoom function in Limma package. The Loess normalized protein data provided by Fredrik Levander was used for analyses in of this project. Technical batch variation was removed from the data by using ´removebatcheffect´ function in Limma package. Protein annotations and gene annotation were obtained from "TxDb.Hsapiens.UCSC.hg38.knownGene" R package for annotations. The two data sets were converted to MultoAssayExperiments for further use. The Notebook "Omics_int_DataPrep.RMD" contains the code for data preparation.
+
+The script tuneFromMultAssay.R was writtern to analyze data for each phenotype and run from command line. The arguments used for diablo implementation for each phenotype are provided in the "Omics_int_Analyses.Rmd". 
+
+```{bash, include=FALSE,}
+#source("omicsInt/tuneFromMultAssayExp.R", echo = T)
+#Rscript omicsInt/tuneFromMultAssayExp.R -i pg_int_hans.rds -o ../results/ -n 5 -f 3 -m "COOenlLymph2" -c 4 -r 50 -p ../data/ &
+#Rscript tuneFromMultAssayExp.R -i pg_int_DE.rds -o ../results/ -n 6 -f 3 -m "doubleExpressor" -c 2 -r 50 -p ../data/
+
+#Rscript tuneFromMultAssayExp.R -i pg_int_rel.rds -o ../results/ -n 3 -f 3 -m "group" -c 2 -r 50 -p ../data/
+
+#Rscript tuneFromMultAssayExp.R -i pg_int_HansDE.rds -o ../results/ -n 3 -f 3 -m "HandsDE" -c 2 -r 50 -p ../data/
+
+```
+
+## Results
+
+### Summary of results
+
+The results delivered for each phenotype are following:
+
+- Correlation plots, with ellipses showing correlation between RNA and protein features selected as important for discriminating a given phenotype.
+- Clustered Image Maps (heatmaps) showing relationship of selected RNA and protein features with the selected phenotype.
+- Correlation circle plots showing 
+- Circos plots for DIABLO analyses showing correlation between 
+- Loading plots (first used here)
+
+- Excel file with features and their relative importance, both from RNA and protein data.
+
+The rds objects for data objects with multiAssayExperiments for each phenotypes and from the respective tuning steps and results can be made available upon request.
+
+### Example figures proided 
+
+**Relpsed vs. Cured individual plot**
+
+
+
+## Figures and data updated
+
+- Folowwoing the preliminary report, user requested update of figures to higher resolution and tweakes to  improve them.
+- User also requested all correlated proteins and genes in the three phenotypes Relapse Category, Hans category and Double Expresser Phenotype.
+
+### Updated Figures
+
+
+```{r, echo=FALSE, include=FALSE}
+png(filename = file.path( "NBISresults/Hans/IndividualPlot_RNA_Proteins_300.png"),  width = 2000, height = 1000, units = "px", res =300)
+plotIndiv(HansRes, 
+          ind.names = FALSE, 
+          group = as.character(Data_Hans$COOenlLymph2),
+          pch = as.factor(Data_Hans$COOenlLymph2),
+          legend=TRUE, cex=c(2,2))
+dev.off()
+```
+
+```{r}
+#png(filename = file.path( "results/Hans/CorrPlot_RNA_Proteins.png"),  width = 1400, height = 800, units = "px", res =150)
+png(filename = file.path( "NBISresults/Hans/CorrPlot_RNA_Proteins_300.png"),  width = 2000, height = 1000, units = "px", res =300)
+plotDiablo(HansRes, ncomp = 1)
+dev.off()
+```
+
+```{r}
+#png(filename = file.path( "results/Hans/VariablePlot_RNA_Proteins.png"),  width = 800, height = 800, units = "px", res =150)
+png(filename = file.path( "NBISresults/Hans/VariablePlot__RNA_Proteins_300.png"),  width = 1500, height = 1000, units = "px", res =300)
+plotVar(HansRes, var.names = c(FALSE, FALSE),
+        legend=TRUE, pch=c(16,16))
+dev.off()
+```
+
+```{r}
+png(filename = file.path("NBISresults/Hans/ClusteringRNA_Proteins_300.png"),  width = 3000, height = 3600, units = "px", res =300)
+cimDiablo(HansRes, color.blocks = c('darkorchid', 'brown1'), comp = 1,legend.position = "right", margins = c(12,20) )
+dev.off()
+```
+
+```{r}
+selectVar(DERes, comp = 1)$protein$value
+```
+
+
+
+```{r}
+png(filename = file.path("NBISresults/Hans/CircosRNA_Proteins_300.png"),  width = 3000, height = 2600, units = "px", res =300)
+hans_rna_prot_vals <-circosPlot(HansRes, cutoff = 0.6, comp = 1, size.variables = 0.4, size.labels = 3, legend = TRUE, line = TRUE)
+dev.off()
+```
+```{r}
+hans_rna_prot_vals <- hans_rna_prot_vals %>% as.data.frame 
+
+
+writexl::write_xlsx(, "NBISresults/Hans/RNA_prot_cor.xlsx")
+```
+
+
+```{r}
+png(filename = file.path("results/Hans/LoadingsRNA_Proteins.png"),  width = 1600, height = 1600, units = "px", res =180)
+plotLoadings(MyResult.diabloNormPHans, comp = 2, contrib = "max")
+dev.off()
+```
+
+
+
+
+## Further suggestions
+
+Currently the variables identified as importtant for discrimination between groups within the repespective phenotypes are used for predition analyses. This was based on discussion with the Per Ola and primarily based ref vs. relapse phenotype where results were genereally weak. If reevant, the study may allow for predecition analyses based on upto 160 protein samples and upto 15 RNA-seq samples for Hans category to test the performace of selected variables. 
+
+
+Differential expression DESEq2 for all phenotypes.
+
+```{r}
+pg_1 <- readRDS("data/multiAssay.rds")
+coldata <- colData(pg_1)[colData(pg_1)$RNA_Seq_ID %in% colnames(experiments(pg_1)$Seq),]
+rownames(coldata) <- coldata$RNA_Seq_ID
+Designsheet<- readRDS('../Data/Designsheet.rds')
+rownames(Designsheet) <- Designsheet$Sample
+
+Annotation <- readRDS('../Data/annotation.rds')
+pc_annotaiton <- subset(Annotation ,Annotation$gene_biotype == 'protein_coding')
+rownames(pc_annotaiton) <- pc_annotaiton$ensembl_gene_id
+Countdata <- readRDS('../Data/countdata.rds')
+Countdata <- Countdata[pc_annotaiton$ensembl_gene_id,]
+
+```
+
+```{r}
+
+
+# RNA_seq <- experiments(pg_1)$Seq
+# colData <- colData(pg_1)[colData(pg_1)$RNA_Seq_ID %in% colnames(RNA_seq),]
+# rownames(colData) <- colData$RNA_Seq_ID
+# colData(RNA_seq) <- colData
+RNA_seq1 <- SummarizedExperiment(assays = SimpleList(counts=as.matrix(Countdata)), rowData = pc_annotaiton,colData = coldata)
+
+# coldata(RNA_seq) <- colData(pg_1)[colData(pg_1)$RNA_Seq_ID %in% colnames(RNA_seq),]
+# 
+# 
+# dds <- DESeqDataSetFromMatrix(countData=Countdata, colData=Designsheet, design=~group)
+
+RNA_seq1 <- RNA_seq1[,!is.na(RNA_seq1$doubleExpressor) & RNA_seq1$doubleExpressor<2]
+
+RNA_seq1$doubleExpressor <- as.factor(RNA_seq1$doubleExpressor)
+        library("DESeq2")
+        ddsSE <- DESeqDataSet(RNA_seq1, design = ~doubleExpressor)
+        keep <- rowSums(counts(ddsSE)) >= 10
+        dds <- ddsSE[keep,]
+        dds <- DESeq(dds)
+        res <- results(dds, alpha = 0.2)
+        res
+
+```
+
+```{r}
+
+#res <- results(dds)
+res.df <- as.data.frame(res)
+res.df$ensembl_gene_id <- rownames(res)
+
+Annotated_res <- merge(res.df, Annotation, on='ensembl_gene_id')
+write_excel_csv(Annotated_res, "NBISresults/UpdateFigRes/Diff_Exp_DoubleExpresser.xlsx")
+writexl::write_xlsx(Annotated_res, "NBISresults/UpdateFigRes/Diff_Exp_DoubleExpresser.xlsx")
+
+```
+
+
+
+
+
+
+```{r}
+
+
+RNA_seq3 <- SummarizedExperiment(assays = SimpleList(counts=as.matrix(Countdata)), rowData = pc_annotaiton,colData = coldata)
+
+#colData(RNA_seq3) <- colData(pg_1)[colData(pg_1)$RNA_Seq_ID %in% colnames(RNA_seq3),]
+RNA_seq3 <- RNA_seq3[ ,!is.na(RNA_seq3$COOenlLymph2) & RNA_seq3$COOenlLymph2 <3]
+RNA_seq3$COOenlLymph2 <- as.factor(RNA_seq3$COOenlLymph2)
+        library("DESeq2")
+        ddsSE2 <- DESeqDataSet(RNA_seq3, design = ~COOenlLymph2)
+        keep <- rowSums(counts(ddsSE2)) >= 10
+        dds3 <- ddsSE2[keep,]
+        dds3 <- DESeq(dds3)
+        res3 <- results(dds3)
+        res.df3 <- as.data.frame(res3)
+res.df3$ensembl_gene_id <- rownames(res3)
+Annotated_resL <- merge(res.df3, Annotation, on='ensembl_gene_id')
+
+writexl::write_xlsx(Annotated_resL, "NBISresults/UpdateFigRes/Diff_Exp_COOenlLymph2.xlsx")
+
+```
+
+
+```{r}
+
+
+RNA_seq2 <- SummarizedExperiment(assays = SimpleList(counts=as.matrix(Countdata)), rowData = pc_annotaiton,colData = coldata)
+
+#colData(RNA_seq3) <- colData(pg_1)[colData(pg_1)$RNA_Seq_ID %in% colnames(RNA_seq3),]
+RNA_seq2 <- RNA_seq2[ ,!is.na(RNA_seq2$Hans)]
+RNA_seq2$Hans <- as.factor(RNA_seq2$Hans)
+        
+        ddsSE21 <- DESeqDataSet(RNA_seq2, design = ~Hans)
+        keep <- rowSums(counts(ddsSE21)) >= 10
+        dds2 <- ddsSE21[keep,]
+        dds2 <- DESeq(dds21)
+        res2 <- results(dds2)
+        res.df2 <- as.data.frame(res2)
+res.df2$ensembl_gene_id <- rownames(res2)
+Annotated_resH <- merge(res.df2, Annotation, on='ensembl_gene_id')
+
+writexl::write_xlsx(Annotated_resH, "NBISresults/UpdateFigRes/Diff_Exp_Hans.xlsx")
+
+```
+
+```{r}
+## Clinical Data
+coldata <- as.data.frame(colData(pg_1))
+writexl::write_xlsx(coldata, "NBISresults/UpdateFigRes/Clinical_Data.xlsx")
+```
+
+
+
+```{r Relapse, echo=FALSE, include=FALSE}
+Data_Rel <- readRDS("data/pg_int_rel.rds")
+
+Rel_per <- readRDS("results/groupperfs.rds")
+Rel_T<- readRDS("results/grouptune.rds")
+RelRes <- readRDS("results/groupresults.rds")
+
+```
+
+```{r, echo=FALSE}
+plotIndiv(RelRes)
+```
+
+**Hans Categories** 
+
+
+```{r Hans, echo=FALSE}
+Data_Hans <- readRDS("data/pg_int_hans.rds")
+
+Hans_per <- readRDS("results/COOenlLymph2perfs.rds")
+Hans_T<- readRDS("results/COOenlLymph2tune.rds")
+HansRes <- readRDS("results/COOenlLymph2results.rds")
+```
+
+
+```{r, warning=FALSE}
+plotIndiv(HansRes)
+```
+The two individual plots above indicate separation of groups for based on selected variables for each of the data sets. Plots for **Hans category** indicate cleasr separation based on RNA and protein data. However this separation is not as clear for relapse category in the protein data.
+
+```{r}
+plotVar(HansRes)
+```
+
+## DE categories
+
+```{r}
+Data_DE <- readRDS("data/pg_int_DE.rds")
+
+DE_per <- readRDS("results/doubleExpressorperfs.rds")
+DE_T<- readRDS("results/doubleExpressortune.rds")
+DERes <- readRDS("results/doubleExpressorresults.rds")
+```
+
+
+
+```{r}
+HansRes$Y <- ifelse(HansRes$Y==2, "ABC", "GCB")
+HansRes$Y <-factor(HansRes$Y)
+
+png(filename =  "NBISresults/UpdateFigRes/COOLymph2Circos.png",  width = 2600, height = 2600, units = "px", res =300)
+circosPlot2(HansRes, cutoff = 0.6, comp = 1, size.variables = 0.4, showIntraLinks = FALSE  , legend = TRUE, line = T)
+#environment(circosPlot2)<- environment(circosPlot)
+dev.off()
+
+```
+
+
+
+
+```{r}
+DERes$Y <- ifelse(DERes$Y==0, "Non-DE", "DE")
+DERes$Y <- factor(DERes$Y)
+png(filename =  "NBISresults/UpdateFigRes/doubleExpresserCircos.png",  width = 1600, height = 1600, units = "px", res =300)
+circosPlot2(DERes, cutoff = 0.6, comp = 1, size.variables = 0.4, showIntraLinks = FALSE  ,legend = TRUE, line = TRUE)
+#environment(circosPlot2)<- environment(circosPlot)
+dev.off()
+
+```
+
+
+```{r}
+png("NBISresults/UpdateFigRes/doubleExpresserClusteringRNA_Proteins_300.png",  width = 3000, height = 3600, units = "px", res =300)
+cimDiablo(DERes, color.blocks = c('darkorchid', 'brown1'), comp = 1,legend.position = "right", margins = c(12,20) )
+dev.off()
+```
+```{r}
+#HansRes$Y <-as.factor(ifelse(HansRes$Y==2, "GCB", "ABC"))
+
+png(filename = "NBISresults/UpdateFigRes/doubleExpresserdividualPlot.png",  width = 2400, height = 1600, units = "px", res =300)
+plotIndiv(DERes, ind.names = FALSE,  group = as.character(DERes$Y), legend=TRUE)
+dev.off()
+```
+
+```{r}
+#png(filename = file.path( "results/Hans/VariablePlot_RNA_Proteins.png"),  width = 800, height = 800, units = "px", res =150)
+png("NBISresults/UpdateFigRes/doubleExpresserVariablePlot.png",  width = 2500, height = 1500, units = "px", res =300)
+plotVar(DERes, var.names = c(FALSE, FALSE),
+        legend=TRUE, pch=c(16,16))
+dev.off()
+```
+
+
+```{r}
+png("NBISresults/UpdateFigRes/doubleExpresserLoadingsRNA_Proteins.png",  width = 2600, height = 2600, units = "px", res =300)
+plotLoadings(DERes, comp = 1, contrib = "max")
+dev.off()
+```
+
+
+```{r}
+#HansRes$Y <-as.factor(ifelse(HansRes$Y==2, "GCB", "ABC"))
+
+png(filename = "NBISresults/UpdateFigRes/COOLymph2IndividualPlot.png",  width = 2400, height = 1600, units = "px", res =300)
+plotIndiv(DERes, ind.names = FALSE,  group = as.character(HansRes$Y), legend=TRUE)
+dev.off()
+```
+
+##Hans
+```{r}
+#png(filename = file.path( "results/Hans/CorrPlot_RNA_Proteins.png"),  width = 1400, height = 800, units = "px", res =150)
+png("NBISresults/UpdateFigRes/doubleExpresserCorr.png",  width = 2000, height = 1000, units = "px", res =300)
+plotDiablo(DERes, ncomp = 1)
+dev.off()
+```
+
+```{r}
+#png(filename = file.path( "results/Hans/VariablePlot_RNA_Proteins.png"),  width = 800, height = 800, units = "px", res =150)
+png("NBISresults/UpdateFigRes/COOLymph2VariablePlot.png",  width = 2500, height = 1500, units = "px", res =300)
+plotVar(HansRes, var.names = c(FALSE, FALSE),
+        legend=TRUE, pch=c(16,16))
+dev.off()
+```
+
+
+```{r}
+png("NBISresults/UpdateFigRes/COOLymph2LoadingsRNA_Proteins.png",  width = 2600, height = 2600, units = "px", res =300)
+plotLoadings(HansRes, comp = 1, contrib = "max")
+dev.off()
+```
+
+```{r}
+RelRes$names$colnames$Y <- c("cured"  , "ref/rel")
+RelRes$Y <- ifelse(RelRes$Y=="cured", "cured", "ref/rel")
+RelRes$Y <- factor(RelRes$Y)
+png(filename =  "NBISresults/UpdateFigRes/RelapseCircos.png",  width = 2600, height = 2600, units = "px", res =300)
+circosPlot2(RelRes, cutoff = 0.6, comp = 1, size.variables = 0.4, showIntraLinks = FALSE  , legend = TRUE, line = TRUE, ncol.legend = )
+#environment(circosPlot2)<- environment(circosPlot)
+dev.off()
+
+```
+
+```{r}
+#png(filename = file.path( "results/Hans/CorrPlot_RNA_Proteins.png"),  width = 1400, height = 800, units = "px", res =150)
+png("NBISresults/UpdateFigRes/RelResCorrPlot_RNA_Proteins_300.png",  width = 2000, height = 1000, units = "px", res =300)
+plotDiablo(RelRes, ncomp = 1)
+dev.off()
+```
+
+```{r}
+#png(filename = file.path( "results/Hans/VariablePlot_RNA_Proteins.png"),  width = 800, height = 800, units = "px", res =150)
+png("NBISresults/UpdateFigRes/RelResVariablePlot.png",  width = 2500, height = 1500, units = "px", res =300)
+plotVar(RelRes, var.names = c(FALSE, FALSE),
+        legend=TRUE, pch=c(16,16))
+dev.off()
+```
+
+
+```{r}
+png("NBISresults/UpdateFigRes/RelResLoadingsRNA_Proteins.png",  width = 2600, height = 2600, units = "px", res =300)
+plotLoadings(RelRes, comp = 1, contrib = "max")
+dev.off()
+```
+
+
+```{r}
+#HansRes$Y <-as.factor(ifelse(HansRes$Y==2, "GCB", "ABC"))
+
+png(filename = "NBISresults/UpdateFigRes/COOLymph2IndividualPlot.png",  width = 2400, height = 1600, units = "px", res =300)
+plotIndiv(HansRes, ind.names = FALSE,  group = as.character(HansRes$Y), legend=TRUE)
+dev.off()
+```
+
+```{r}
+png("NBISresults/UpdateFigRes/COOLymph2lusteringRNA_Proteins_300.png",  width = 3000, height = 3600, units = "px", res =300)
+cimDiablo(HansRes, color.blocks = c('darkorchid', 'brown1'), comp = 1,legend.position = "right", margins = c(12,20) )
+dev.off()
+```
+
+
+
+```{r}
+
+png(filename = "NBISresults/UpdateFigRes/RefRelIndividualPlot.png",  width = 2400, height = 1800, units = "px", res =300)
+plotIndiv(RelRes, ind.names = FALSE,  group = ifelse(RelRes$Y=="cured", "cured", "ref/rel"), legend=TRUE, cex=c(2,2), )
+dev.off()
+```
+
+
+```{r}
+png("NBISresults/UpdateFigRes/RefRelClusteringRNA_Proteins_300.png",  width = 3000, height = 3600, units = "px", res =300)
+cimDiablo(RelRes, color.blocks = c('darkorchid', 'brown1'), comp = 1,legend.position = "right", margins = c(12,20) )
+dev.off()
+```
+
+```{r}
+
+
+png(filename = "NBISresults/UpdateFigRes/COOLymph2IndividualPlot.png",  width = 2400, height = 1600, units = "px", res =300)
+plotIndiv(HansRes, ind.names = FALSE,  group = ifelse(HansRes$Y==2, "GCB", "ABC"), legend=TRUE, cex=c(2,2), )
+dev.off()
+```
+
+```{r}
+DE_variables <- list()
+DE_variables$impProteins <- selectVar(DERes, comp = 1)$protein$value %>% rownames_to_column()
+DE_variables$impRNA <- selectVar(DERes, comp = 1)$mRNA$value  %>% rownames_to_column()
+DE_variables$RNA_ProteinCorr <-circosPlot2(DERes, cutoff = 0.6, comp = 1, size.variables = 0.4, showIntraLinks = FALSE  , legend = TRUE, line = T)
+DE_variables$RNA_ProteinCorr <- as.data.frame(DE_variables$RNA_ProteinCorr) %>% rownames_to_column()
+writexl::write_xlsx(DE_variables,"NBISresults/UpdateFigRes/doubleExpresserCorrelationData.xlsx" )
+
+```
+
+```{r}
+Relapsevariables <- list()
+Relapsevariables$impProteins <- selectVar(RelRes, comp = 1)$protein$value %>% rownames_to_column()
+Relapsevariables$impRNA <- selectVar(RelRes, comp = 1)$mRNA$value  %>% rownames_to_column()
+Relapsevariables$RNA_ProteinCorr <-circosPlot2(RelRes, cutoff = 0.6, comp = 1, size.variables = 0.4, showIntraLinks = FALSE  , legend = TRUE, line = T)
+Relapsevariables$RNA_ProteinCorr <- as.data.frame(Relapsevariables$RNA_ProteinCorr) %>% rownames_to_column()
+writexl::write_xlsx(Relapsevariables,"NBISresults/UpdateFigRes/RelapseCorrelationData.xlsx" )
+
+```
+
+```{r}
+COOLymp2variables <- list()
+COOLymp2variables$impProteins <- selectVar(HansRes, comp = 1)$protein$value %>% rownames_to_column()
+COOLymp2variables$impRNA <- selectVar(HansRes, comp = 1)$mRNA$value  %>% rownames_to_column()
+COOLymp2variables$RNA_ProteinCorr <-circosPlot2(HansRes, cutoff = 0.6, comp = 1, size.variables = 0.4, showIntraLinks = FALSE  , legend = TRUE, line = T)
+COOLymp2variables$RNA_ProteinCorr <- as.data.frame(COOLymp2variables$RNA_ProteinCorr) %>% rownames_to_column()
+writexl::write_xlsx(COOLymp2variables,"NBISresults/UpdateFigRes/COOLymph2CorrelationData.xlsx" )
+
+```
+Provide Loadings
+
+Patient List with the clinical data
+#
+Cirocs
+remove protein RNA label
+
+ref_rel to ref/rel :All plots
+
+GCB (1),  ABC (2)
+
+Ylabesl on PC selection
+
+
+Double Expresser
+Non-DE 0, 1 DE 
+
+
+## Questions
+
+## References
+
+Tenenhaus, Arthur, Cathy Philippe, Vincent Guillemot, Kim-Anh Le Cao, Jacques Grill, and Vincent Frouin. 2014. “Variable Selection for Generalized Canonical Correlation Analysis.” Biostatistics 15 (3). Oxford University Press:569–83.
+
+Tenenhaus, Arthur, and Michel Tenenhaus. 2011. “Regularized Generalized Canonical Correlation Analysis.” Psychometrika 76 (2). Springer:257–84.
+
+Singh A., Gautier B., Shannon C., Vacher M., Rohart F., Tebbutt S. and Lê Cao K.A. (2016). DIABLO: multi omics integration for biomarker discovery. BioRxiv available here: http://biorxiv.org/content/early/2016/08/03/067611
+
+Rohart F, Gautier B, Singh A, Lê Cao K-A. mixOmics: an R package for 'omics feature selection and multiple data integration. PLoS Comput Biol 13(11): e1005752
+
+González I., Lê Cao K.A., Davis M.J., Déjean S. (2012). Visualising associations between paired 'omics' data sets. BioData Mining; 5(1).
+
+## Data responsibility
+*NBIS & Uppnex Unfortunately, we do not have resources to keep any files associated with the support request. We suggest that you safely store the results delivered by us. In addition, we ask that you remove the files from UPPMAX/UPPNEX after analysis is completed. The main storage at UPPNEX is optimized for high-speed and parallel access, which makes it expensive and not the right place for long time archiving.*
+
+*Long-term backup The responsibility for data archiving lies with universities and we recommend asking your local IT for support with long-term data archiving. Also a newly established Data Office at SciLifeLab may be of help to discuss other options.*
+
+## Acknowledgments
+If you are presenting the results in a paper, at a workshop or conference, we kindly ask you to acknowledge us.
+	NBIS Staff are encouraged to be co-authors when this is merited in accordance to the ethical recommendations for authorship, e.g. ICMJE recommendations.If applicable, please include Ashfaq, Ali, National Bioinformatics Infrastructure Sweden, Science for Life Laboratory, Department of Immunotechnology, Lund University . In other cases, NBIS would be grateful if support by us is acknowledged in publications according to this example: "Support by NBIS (National Bioinformatics Infrastructure Sweden) is gratefully acknowledged"
+
+NGI In publications based on data from NGI Sweden, the authors must acknowledge SciLifeLab, NGI and UPPMAX: "The authors would like to acknowledge support from Science for Life Laboratory, the National Genomics Infrastructure, NGI, and Uppmax for providing assistance in massive parallel sequencing and computational infrastructure."
+Support project closing procedures 
+Once the final report is delivered, you should be contacted by one of our managers, Jessica Lindvall jessica.lindvall@nbis.se or Henrik Lantz henrik.lantz@nbis.se, with a request to close down the project in our internal system and for invoicing matters. If we do not hear from you within 30 days the project will be automatically closed and invoice sent. Again, we would like to remind you about data responsibility and acknowledgements, see Data Responsibility and Acknowledgments sections.
+You are naturally more than welcome to come back to us with further data analysis request at any time via http://nbis.se/support/support.html.
+Thank you for using NBIS and all the best for future research.
+
+
